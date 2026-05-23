@@ -61,6 +61,48 @@ YAPI_MODEL=test uvicorn examples.wish_api:app --reload
 
 Open `http://localhost:8000/docs` for the auto-generated OpenAPI UI.
 
+## Configuration
+
+`yapi` is configured entirely through environment variables — the package never reads `.env` files itself. Use a launcher that injects them (recommended: `uvicorn --env-file .env`; alternatives: `set -a; source .env; set +a` in your shell, Docker `--env-file`, Kubernetes secrets, etc.).
+
+### `YAPI_MODEL` (required for the default runner)
+
+PydanticAI model string in `provider:model` form. Read once when `PromptRouter()` is constructed without an explicit `agent_runner`.
+
+```bash
+YAPI_MODEL=openai:gpt-4o              # OpenAI
+YAPI_MODEL=anthropic:claude-3-5-sonnet # Anthropic
+YAPI_MODEL=openai:deepseek-chat        # DeepSeek (OpenAI-compatible)
+YAPI_MODEL=test                        # PydanticAI TestModel, no key, no network
+```
+
+Unset → first request returns HTTP 500.
+
+### Provider credentials (read directly by PydanticAI)
+
+`yapi` does **not** validate or even look at these — they are consumed by the underlying PydanticAI provider via `os.environ`:
+
+| Provider | Env vars |
+|---|---|
+| OpenAI | `OPENAI_API_KEY` |
+| OpenAI-compatible endpoints (DeepSeek, Azure OpenAI, OneAPI, local servers, …) | `OPENAI_API_KEY` + `OPENAI_BASE_URL` (e.g. `https://api.deepseek.com/v1`) |
+| Anthropic | `ANTHROPIC_API_KEY` |
+| Others (Google, Groq, Mistral, …) | See [PydanticAI providers docs](https://ai.pydantic.dev/models/) |
+
+### Example `.env` (DeepSeek)
+
+```dotenv
+YAPI_MODEL=openai:deepseek-chat
+OPENAI_API_KEY=sk-...
+OPENAI_BASE_URL=https://api.deepseek.com/v1
+```
+
+```bash
+uv run uvicorn examples.wish_api:app --reload --env-file .env
+```
+
+> ⚠️ DeepSeek's "thinking" models (`deepseek-reasoner`, `deepseek-v4-flash`) currently reject OpenAI Function Calling's `tool_choice` parameter, which PydanticAI uses by default for structured output. Use `deepseek-chat` for now.
+
 ## How it works
 
 For each request, `yapi`:

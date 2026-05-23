@@ -84,7 +84,8 @@ from yapi import PromptRouter
 `PromptRouter()` 不传 `agent_runner` 时回退到默认 `yapi.agent.build_agent_runner()`，在工厂调用时**一次性绑定** `os.getenv("YAPI_MODEL")` 到闭包。
 
 - 未设置：构造不报错；**第一次请求**时 runner 抛 `NotImplementedError("Connect pydantic_ai.Agent by setting YAPI_MODEL")`，被 `Runtime.execute` 包装为 `RuntimeExecutionError`，最终 FastAPI 转 HTTP 500。
-- 设为模型字符串（如 `openai:gpt-4o`、`anthropic:claude-3-5-sonnet`）：交给 `pydantic_ai.Agent(...)` 直接解析；API key 由 pydantic-ai 自己处理，yapi 不做校验。
+- 设为模型字符串（如 `openai:gpt-4o`、`anthropic:claude-3-5-sonnet`、`openai:deepseek-chat`）：交给 `pydantic_ai.Agent(...)` 直接解析。**Provider 凭证由 pydantic-ai 在请求期直接读 `os.environ`**，yapi 全程不感知、不校验、不转发：`OPENAI_API_KEY` / `OPENAI_BASE_URL`（OpenAI 与所有 OpenAI 兼容端点，包括 DeepSeek、Azure OpenAI、OneAPI、自托管 vLLM 等）、`ANTHROPIC_API_KEY`、其他 provider 见 PydanticAI 文档。这意味着 yapi 永远不会因为"key 没设"在装饰器期或构造期失败——错误只能在请求期由 pydantic-ai 自己抛出，最终被包装成 `RuntimeExecutionError`。
 - 设为字面量 `test`：PydanticAI 内置 `TestModel` 接管，零 API key、零网络，按响应模型 schema 生成占位结构。**离线冒烟首选**。
+- 注意 yapi **不读 `.env` 文件**——任何 env 注入都由启动器负责（本地推荐 `uvicorn --env-file .env`，CI 用 secrets→env，生产用 systemd/k8s）。这是有意的 12-factor 设计：不依赖 `python-dotenv`，部署形态由部署侧决定。
 
 跨测试场景大多通过 `PromptRouter(agent_runner=lambda **_: {...})` 注入 fake runner 绕开 `YAPI_MODEL`，详见 [`../architecture/agent-runner-contract.md`](../architecture/agent-runner-contract.md)。CI 与 release 流水线均依赖 `YAPI_MODEL=test` 做离线冒烟，因此发版无需配置任何 LLM provider secret。

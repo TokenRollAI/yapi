@@ -41,3 +41,8 @@ htmlcov/
 # yapi runtime artifacts
 app_state.json
 app_state.db
+
+# Secrets / local env
+.env
+.env.local
+.env.*.local
