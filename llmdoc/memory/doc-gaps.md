@@ -41,3 +41,4 @@ status: living
 
 - **`Runtime` 内 `model_validate` 失败的错误反馈策略**：当前只打 WARNING log 后让 `ValidationError` 上抛，FastAPI 转 HTTP 500，错误体里看不到字段细节。未来是否包装为 `RuntimeExecutionError` 带字段路径 hint 待定。
 - **多个 `<context>` 块**（如 `<user_context>` / `<item_context>` 分离）：v2.2 spec §10 明确不做，一个路由一个 `<context>`，里面用 `add_section(name, ...)` 区分子段。如果未来 LLM 实测对子段分隔不敏感导致需求出现，再考虑。
+- **pydantic-ai v2.0 `openai:` 前缀语义变化**（2026-05-24 锁定 1.102.0 时发现）：当前 `openai:deepseek-chat` 等模型字符串在 pydantic-ai v1.x 仍走 Chat Completions API；v2.0 时 `openai:` 默认走 Responses API。届时 README、`.env` 示例与 `must/project-shape.md` 的 `YAPI_MODEL` 段都需要把示例改成 `openai-chat:` 前缀（保留 Chat Completions 行为）。当前是 `PydanticAIDeprecationWarning`，不阻断使用——live tests 跑时可观察到。pin `pydantic-ai<2` 的时机：v2.0 release 前两周左右。
