@@ -156,6 +156,55 @@ Decoration kwargs:
 
 Violations are raised as `YapiDeclarationError` at decoration time — broken routes fail at import, not at request time.
 
+## Prompt context
+
+Use `PromptContext` to inject structured facts into the system prompt without returning a string. Declare a parameter typed `PromptContext` and `yapi` auto-injects a per-request instance:
+
+```python
+from yapi import PromptContext, PromptRouter
+
+router = PromptRouter()
+
+
+@router.prompt.post("/wish")
+def make_a_wish(req: WishIn, ctx: PromptContext) -> WishOut:
+    """Decide whether to grant the user's wish."""
+    ctx.add_section("User Profile", {"vip": req.user_id.startswith("vip-")})
+    ctx.add_kv("user_id", req.user_id)
+    ctx.add(req.wish)
+```
+
+`yapi` collects all segments and wraps them in `<context>…</context>` at the end of the system prompt:
+
+```
+You are the execution engine…
+
+Decide whether to grant the user's wish.
+
+<context>
+# User Profile
+{"vip": true}
+
+user_id: vip-1
+
+moon
+</context>
+```
+
+Three methods:
+
+| Method | Produces |
+|---|---|
+| `ctx.add(value)` | `<serialized value>` |
+| `ctx.add_kv(key, value)` | `{key}: <serialized value>` |
+| `ctx.add_section(name, body)` | `# {name}\n<serialized body>` |
+
+Value serialization: `str` → pass-through; `BaseModel` → `model_dump_json()`; `dict`/`list`/`tuple` → `json.dumps(..., ensure_ascii=False)`; anything else → `str()`. `None` is rejected — use `""` if you want an empty segment.
+
+`PromptContext` is **append-only** — no `clear` / `pop`. Use Python `if` for conditional adds. At most one `PromptContext` parameter per route; the parameter must not carry FastAPI markers (`Annotated[PromptContext, Body()/Query()/Depends()]` is a declaration error).
+
+State retrieval is out of scope for `yapi`. Fetch your data via `Depends(...)` and pass it to `ctx.*`. See `examples/state_via_depends.py`.
+
 ## Dependency injection
 
 ```python

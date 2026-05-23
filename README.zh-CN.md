@@ -156,6 +156,55 @@ uv run uvicorn examples.wish_api:app --reload --env-file .env
 
 所有违规都在装饰期同步抛 `YapiDeclarationError`，import / `include_router` 阶段就暴露。
 
+## Prompt context
+
+用 `PromptContext` 把结构化事实注入 system prompt，无需在函数里 `return` 字符串。在签名上声明一个类型为 `PromptContext` 的参数，yapi 会按请求自动注入实例：
+
+```python
+from yapi import PromptContext, PromptRouter
+
+router = PromptRouter()
+
+
+@router.prompt.post("/wish")
+def make_a_wish(req: WishIn, ctx: PromptContext) -> WishOut:
+    """根据用户档案决定是否实现愿望。"""
+    ctx.add_section("User Profile", {"vip": req.user_id.startswith("vip-")})
+    ctx.add_kv("user_id", req.user_id)
+    ctx.add(req.wish)
+```
+
+yapi 把所有片段拼接后外裹 `<context>…</context>`，追加到 system prompt 末尾：
+
+```
+You are the execution engine…
+
+根据用户档案决定是否实现愿望。
+
+<context>
+# User Profile
+{"vip": true}
+
+user_id: vip-1
+
+moon
+</context>
+```
+
+三个方法：
+
+| 方法 | 输出片段 |
+|---|---|
+| `ctx.add(value)` | `<序列化后的值>` |
+| `ctx.add_kv(key, value)` | `{key}: <序列化后的值>` |
+| `ctx.add_section(name, body)` | `# {name}\n<序列化后的 body>` |
+
+`value` 序列化规则：`str` 原样；`BaseModel` → `model_dump_json()`；`dict`/`list`/`tuple` → `json.dumps(..., ensure_ascii=False)`；其它 → `str()`。`None` 被拒绝——想要"空段"请显式传 `""`。
+
+`PromptContext` 是纯 **append-only** 容器，无 `clear` / `pop`，条件添加用 Python 原生 `if`。一个路由最多一个 `PromptContext` 参数；该参数**不能**带 FastAPI marker（`Annotated[PromptContext, Body()/Query()/Depends()]` 装饰期报错）。
+
+state 取数不在 yapi 管辖范围内——用 `Depends(...)` 拿客户端（Redis / Mongo / SQL …），再调 `ctx.*` 决定哪些事实进 prompt。参见 `examples/state_via_depends.py`。
+
 ## 依赖注入
 
 ```python

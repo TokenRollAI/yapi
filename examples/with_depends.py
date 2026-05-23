@@ -1,17 +1,17 @@
-"""Depends 注入 + dynamic prompt 的最小示例。
+"""Depends 注入 + PromptContext 的最小示例（v2.2）。
 
 运行：
     YAPI_MODEL=test uv run uvicorn examples.with_depends:app --reload
 
 可观察：
     POST /wish 用 `Depends(fetch_profile)` 注入用户档案，
-    并在路由函数内返回 dynamic prompt 段以追加到 system prompt。
+    通过 PromptContext 把结构化片段注入 system prompt（外裹 <context>...</context>）。
 """
 
 from fastapi import Depends, FastAPI
 from pydantic import BaseModel
 
-from yapi import PromptRouter
+from yapi import PromptContext, PromptRouter
 
 
 class WishIn(BaseModel):
@@ -36,12 +36,12 @@ router = PromptRouter()
 @router.prompt.post("/wish")
 def make_a_wish(
     req: WishIn,
+    ctx: PromptContext,
     profile: dict = Depends(fetch_profile),
 ) -> WishOut:
     """根据用户档案决定是否实现愿望。"""
-    if profile["vip"]:
-        return f"user {req.user_id} is a VIP, grant the wish gracefully."
-    return f"user {req.user_id} is regular, decide thoughtfully."
+    ctx.add_section("User Profile", profile)
+    ctx.add_kv("user_id", req.user_id)
 
 
 app = FastAPI(title="yapi with depends")
