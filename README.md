@@ -98,6 +98,8 @@ YAPI_MODEL=test                        # PydanticAI TestModel, no key, no networ
 
 Unset → constructor emits a `YapiUsageWarning`, first request returns HTTP 500.
 
+> ⚠️ **The model must support OpenAI Function Calling's `tool_choice` parameter.** `yapi` relies on PydanticAI's structured-output path, which forces the model to emit a tool call matching your response `BaseModel`. Models that lack `tool_choice` support — most notably "reasoning / thinking" variants such as `deepseek-reasoner`, `deepseek-v4-flash`, `o1-preview` / `o1-mini`, or any chat-only / completion-only checkpoint — will return HTTP 500 with a `ModelHTTPError` at the first request. Pick a model whose API docs explicitly support function calling (`gpt-4o`, `gpt-4o-mini`, `claude-3-5-sonnet`, `deepseek-chat`, …).
+
 ### Provider credentials (read directly by PydanticAI)
 
 `yapi` does **not** validate or even look at these — they are consumed by the underlying PydanticAI provider via `os.environ`:
@@ -121,7 +123,7 @@ OPENAI_BASE_URL=https://api.deepseek.com/v1
 uv run uvicorn examples.wish_api:app --reload --env-file .env
 ```
 
-> DeepSeek's "thinking" models (`deepseek-reasoner`, `deepseek-v4-flash`) currently reject OpenAI Function Calling's `tool_choice` parameter, which PydanticAI uses by default for structured output. Use `deepseek-chat` for now.
+> Same caveat as the warning above: DeepSeek's "thinking" models (`deepseek-reasoner`, `deepseek-v4-flash`) reject `tool_choice` and won't work here. Use `deepseek-chat`.
 
 ## How a prompt route runs
 

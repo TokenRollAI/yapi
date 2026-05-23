@@ -98,6 +98,8 @@ YAPI_MODEL=test                        # PydanticAI TestModel，无 key 无网�
 
 未设置 → 构造期发出 `YapiUsageWarning`，第一次请求 HTTP 500。
 
+> ⚠️ **模型必须支持 OpenAI Function Calling 的 `tool_choice` 参数。** `yapi` 走 PydanticAI 的结构化输出路径，会强制模型按你声明的响应 `BaseModel` 返回一次 tool call。不支持 `tool_choice` 的模型——典型如"推理 / 思考"系列（`deepseek-reasoner`、`deepseek-v4-flash`、`o1-preview` / `o1-mini` 等），或者只支持 chat / completion 的检查点——首次请求会以 `ModelHTTPError` 报 HTTP 500。请选明确声明支持 function calling 的模型（`gpt-4o`、`gpt-4o-mini`、`claude-3-5-sonnet`、`deepseek-chat` 等）。
+
 ### Provider 凭证（由 PydanticAI 直接读取）
 
 `yapi` 不做任何校验，下列变量由底层 PydanticAI 通过 `os.environ` 读取：
@@ -121,7 +123,7 @@ OPENAI_BASE_URL=https://api.deepseek.com/v1
 uv run uvicorn examples.wish_api:app --reload --env-file .env
 ```
 
-> DeepSeek 的"思考"系列模型（`deepseek-reasoner`、`deepseek-v4-flash`）当前不接受 OpenAI Function Calling 的 `tool_choice` 参数，而 PydanticAI 默认用它来约束结构化输出。优先使用 `deepseek-chat`。
+> 与上方警告同源：DeepSeek 的"思考"系列（`deepseek-reasoner`、`deepseek-v4-flash`）不接受 `tool_choice`，在这里无法工作，请用 `deepseek-chat`。
 
 ## 请求生命周期
 
