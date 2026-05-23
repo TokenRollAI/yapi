@@ -95,3 +95,60 @@ def test_runtime_sends_composed_prompt_to_agent_runner() -> None:
     assert "user is shouting" in captured["prompt"]
     assert captured["request"] == {"user_id": "u-1", "wish": "moon"}
     assert captured["injected"] == {"profile": {"vip": True}}
+
+
+from yapi.prompt_context import PromptContext
+from yapi.runtime import compose_prompt
+
+
+def test_compose_skips_context_when_empty():
+    endpoint = PromptEndpoint(
+        path="/wish",
+        method="POST",
+        request_model=None,
+        response_model=WishResponse,
+        function_doc="grant wishes",
+    )
+    prompt = compose_prompt(endpoint, None, None)
+    assert "<context>" not in prompt
+
+
+def test_compose_wraps_single_ctx_segment():
+    endpoint = PromptEndpoint(
+        path="/wish",
+        method="POST",
+        request_model=None,
+        response_model=WishResponse,
+        function_doc="grant wishes",
+    )
+    ctx = PromptContext()
+    ctx.add("hint segment")
+    prompt = compose_prompt(endpoint, ctx, None)
+    assert "<context>\nhint segment\n</context>" in prompt
+
+
+def test_compose_wraps_dynamic_only():
+    endpoint = PromptEndpoint(
+        path="/wish",
+        method="POST",
+        request_model=None,
+        response_model=WishResponse,
+        function_doc="grant wishes",
+    )
+    prompt = compose_prompt(endpoint, None, "dynamic text")
+    assert "<context>\ndynamic text\n</context>" in prompt
+
+
+def test_compose_concatenates_ctx_then_dynamic():
+    endpoint = PromptEndpoint(
+        path="/wish",
+        method="POST",
+        request_model=None,
+        response_model=WishResponse,
+        function_doc="grant wishes",
+    )
+    ctx = PromptContext()
+    ctx.add("s1")
+    ctx.add("s2")
+    prompt = compose_prompt(endpoint, ctx, "dynamic")
+    assert "<context>\ns1\n\ns2\n\ndynamic\n</context>" in prompt
