@@ -430,3 +430,119 @@ def test_prompt_handler_signature_preserves_annotated() -> None:
     q_param = sig.parameters["q"]
     assert hasattr(req_param.annotation, "__metadata__")
     assert hasattr(q_param.annotation, "__metadata__")
+
+
+# ---- v2.2 PromptContext ----
+
+
+from yapi import PromptContext
+
+
+def test_router_injects_prompt_context_by_type() -> None:
+    captured = {}
+    app = FastAPI()
+
+    def runner(**kwargs):
+        captured.update(kwargs)
+        return {"granted": True, "message": "ok"}
+
+    router = PromptRouter(agent_runner=runner)
+
+    @router.prompt.post("/wish")
+    def make_a_wish(req: WishRequest, ctx: PromptContext) -> WishResponse:
+        """grant wishes"""
+        ctx.add_section("User", req.user_id)
+
+    app.include_router(router)
+    client = TestClient(app)
+    resp = client.post("/wish", json={"user_id": "u-1", "wish": "moon"})
+    assert resp.status_code == 200
+    assert "<context>" in captured["prompt"]
+    assert "# User" in captured["prompt"]
+    assert "u-1" in captured["prompt"]
+
+
+def test_router_injects_prompt_context_async() -> None:
+    captured = {}
+    app = FastAPI()
+
+    def runner(**kwargs):
+        captured.update(kwargs)
+        return {"granted": True, "message": "ok"}
+
+    router = PromptRouter(agent_runner=runner)
+
+    @router.prompt.post("/wish")
+    async def make_a_wish(req: WishRequest, ctx: PromptContext) -> WishResponse:
+        """grant wishes"""
+        ctx.add_kv("wish", req.wish)
+
+    app.include_router(router)
+    client = TestClient(app)
+    resp = client.post("/wish", json={"user_id": "u-1", "wish": "stars"})
+    assert resp.status_code == 200
+    assert "wish: stars" in captured["prompt"]
+
+
+def test_router_prompt_context_param_name_is_arbitrary() -> None:
+    captured = {}
+    app = FastAPI()
+
+    def runner(**kwargs):
+        captured.update(kwargs)
+        return {"granted": True, "message": "ok"}
+
+    router = PromptRouter(agent_runner=runner)
+
+    @router.prompt.post("/wish")
+    def make_a_wish(req: WishRequest, prompt_ctx: PromptContext) -> WishResponse:
+        """grant wishes"""
+        prompt_ctx.add("from prompt_ctx")
+
+    app.include_router(router)
+    client = TestClient(app)
+    resp = client.post("/wish", json={"user_id": "u-1", "wish": "moon"})
+    assert resp.status_code == 200
+    assert "from prompt_ctx" in captured["prompt"]
+
+
+def test_router_rejects_two_prompt_context_params() -> None:
+    router = PromptRouter(agent_runner=_ok_runner)
+
+    with pytest.raises(YapiDeclarationError, match="at most one PromptContext"):
+
+        @router.prompt.post("/wish")
+        def make_a_wish(
+            req: WishRequest,
+            ctx1: PromptContext,
+            ctx2: PromptContext,
+        ) -> WishResponse:
+            """grant wishes"""
+
+
+def test_router_rejects_prompt_context_with_fastapi_marker() -> None:
+    router = PromptRouter(agent_runner=_ok_runner)
+
+    with pytest.raises(YapiDeclarationError, match="must not carry FastAPI markers"):
+
+        @router.prompt.post("/wish")
+        def make_a_wish(
+            req: WishRequest,
+            ctx: Annotated[PromptContext, Body()],
+        ) -> WishResponse:
+            """grant wishes"""
+
+
+def test_router_prompt_context_not_in_openapi() -> None:
+    app = FastAPI()
+    router = PromptRouter(agent_runner=_ok_runner)
+
+    @router.prompt.post("/wish")
+    def make_a_wish(req: WishRequest, ctx: PromptContext) -> WishResponse:
+        """grant wishes"""
+        ctx.add("hint")
+
+    app.include_router(router)
+    schema = app.openapi()
+    schema_str = str(schema)
+    assert "PromptContext" not in schema_str

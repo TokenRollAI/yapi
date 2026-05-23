@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from yapi.agent import build_default_runner
 from yapi.endpoint import PromptEndpoint
 from yapi.errors import RuntimeExecutionError, YapiDeclarationError, YapiUsageWarning
+from yapi.prompt_context import PromptContext
 from yapi.runner import AgentRunner
 from yapi.runtime import PromptComposer, Runtime
 
@@ -63,6 +64,7 @@ class ParamRole(Enum):
     REQUEST_MODEL = "request_model"
     DEPENDENCY = "dependency"
     INJECTED_FIELD = "injected_field"
+    PROMPT_CONTEXT = "prompt_context"
 
 
 def _unwrap_annotated(annotation: Any) -> tuple[Any, tuple[Any, ...]]:
@@ -73,6 +75,10 @@ def _unwrap_annotated(annotation: Any) -> tuple[Any, tuple[Any, ...]]:
 
 def _is_basemodel_type(tp: Any) -> bool:
     return isinstance(tp, type) and issubclass(tp, BaseModel)
+
+
+def _is_prompt_context_type(tp: Any) -> bool:
+    return isinstance(tp, type) and issubclass(tp, PromptContext)
 
 
 def _classify_param(
@@ -90,8 +96,21 @@ def _classify_param(
         )
 
     annotation = param.annotation
-    default = param.default
+
+    # PromptContext bare type → auto-inject role (must be checked before _unwrap_annotated)
+    if _is_prompt_context_type(annotation):
+        return ParamRole.PROMPT_CONTEXT
+
     base_annotation, metadata = _unwrap_annotated(annotation)
+
+    # PromptContext inside Annotated[...] with markers is forbidden
+    if _is_prompt_context_type(base_annotation) and metadata:
+        raise YapiDeclarationError(
+            f"yapi prompt route '{func_name}' parameter '{name}': "
+            "PromptContext is auto-injected by yapi and must not carry FastAPI markers"
+        )
+
+    default = param.default
 
     if isinstance(default, params.Depends):
         return ParamRole.DEPENDENCY
@@ -134,7 +153,13 @@ def _classify_param(
 
 def _introspect(
     func: Callable,
-) -> tuple[type[BaseModel] | None, type[BaseModel], dict[str, ParamRole], str | None]:
+) -> tuple[
+    type[BaseModel] | None,
+    type[BaseModel],
+    dict[str, ParamRole],
+    str | None,
+    str | None,
+]:
     signature = inspect.signature(func)
 
     return_annotation = signature.return_annotation
@@ -156,6 +181,7 @@ def _introspect(
     param_roles: dict[str, ParamRole] = {}
     request_model: type[BaseModel] | None = None
     request_param_name: str | None = None
+    ctx_param_name: str | None = None
 
     for name, param in signature.parameters.items():
         role = _classify_param(name, param, func.__name__)
@@ -169,8 +195,14 @@ def _introspect(
             base_annotation, _ = _unwrap_annotated(param.annotation)
             request_model = base_annotation
             request_param_name = name
+        elif role is ParamRole.PROMPT_CONTEXT:
+            if ctx_param_name is not None:
+                raise YapiDeclarationError(
+                    f"yapi prompt route '{func.__name__}' may declare at most one PromptContext parameter"
+                )
+            ctx_param_name = name
 
-    return request_model, return_annotation, param_roles, request_param_name
+    return request_model, return_annotation, param_roles, request_param_name, ctx_param_name
 
 
 def _validate_prompt_kwargs(path: str, kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -238,7 +270,13 @@ class PromptRouter(APIRouter):
         passthrough = _validate_prompt_kwargs(path, kwargs)
 
         def decorator(func: Callable) -> Callable:
-            request_model, response_model, param_roles, request_param_name = _introspect(func)
+            (
+                request_model,
+                response_model,
+                param_roles,
+                request_param_name,
+                ctx_param_name,
+            ) = _introspect(func)
 
             endpoint = PromptEndpoint(
                 path=path,
@@ -255,7 +293,11 @@ class PromptRouter(APIRouter):
             async def handler(**kwargs):
                 injected: dict[str, Any] = {}
                 request_instance: BaseModel | None = None
+                ctx = PromptContext() if ctx_param_name else None
+
                 for name, role in param_roles.items():
+                    if name == ctx_param_name:
+                        continue
                     if name not in kwargs:
                         continue
                     if role is ParamRole.REQUEST_MODEL:
@@ -263,10 +305,14 @@ class PromptRouter(APIRouter):
                     else:
                         injected[name] = kwargs[name]
 
+                user_kwargs = dict(kwargs)
+                if ctx_param_name is not None:
+                    user_kwargs[ctx_param_name] = ctx
+
                 if is_async:
-                    dynamic_prompt = await func(**kwargs)
+                    dynamic_prompt = await func(**user_kwargs)
                 else:
-                    dynamic_prompt = func(**kwargs)
+                    dynamic_prompt = func(**user_kwargs)
 
                 if dynamic_prompt is not None and not isinstance(dynamic_prompt, str):
                     raise RuntimeExecutionError(
@@ -279,16 +325,22 @@ class PromptRouter(APIRouter):
                     endpoint=endpoint,
                     request_model=request_instance,
                     injected=injected,
+                    prompt_context=ctx,
                     dynamic_prompt=dynamic_prompt,
                 )
 
+            # FastAPI-visible params: filter out PROMPT_CONTEXT
+            fastapi_visible_params = [
+                p for p in original_params
+                if param_roles.get(p.name) is not ParamRole.PROMPT_CONTEXT
+            ]
             handler.__signature__ = inspect.Signature(
-                parameters=original_params,
+                parameters=fastapi_visible_params,
                 return_annotation=response_model,
             )
             handler.__annotations__ = {
                 p.name: p.annotation
-                for p in original_params
+                for p in fastapi_visible_params
                 if p.annotation is not inspect.Parameter.empty
             }
             handler.__annotations__["return"] = response_model
@@ -296,11 +348,12 @@ class PromptRouter(APIRouter):
             handler.__doc__ = func.__doc__
 
             logger.debug(
-                "registering prompt route method=%s path=%s handler=%s async=%s",
+                "registering prompt route method=%s path=%s handler=%s async=%s ctx=%s",
                 upper,
                 path,
                 func.__name__,
                 is_async,
+                ctx_param_name,
             )
 
             self.add_api_route(
