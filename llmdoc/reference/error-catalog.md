@@ -51,7 +51,9 @@ v1 残留 `yapi/errors.py::StateStoreError` 在 v2.1 已**物理删除**。`from
 | `_introspect`：第二个 REQUEST_MODEL 参数 | `yapi prompt route '<func>' may declare at most one Pydantic request model parameter` |
 | `_classify_param`：`*args` / `**kwargs` | `yapi prompt route '<func>' does not support *args/**kwargs (parameter '<name>')` |
 | `_classify_param`：标量 Body | `yapi prompt route '<func>' parameter '<name>': Body(...) may only be used with a Pydantic BaseModel-typed parameter; use Query/Header/Cookie/Path/Form/File for scalar fields` |
+| `_classify_param`：`Annotated[PromptContext, Marker]`（v2.2 起） | `yapi prompt route '<func>' parameter '<name>': PromptContext is auto-injected by yapi and must not carry FastAPI markers` |
 | `_classify_param`：非 BaseModel / 非 Depends / 非 FastAPI marker | `yapi prompt route '<func>' has parameter '<name>' that is neither a Pydantic BaseModel, a Depends() dependency, nor a FastAPI Annotated marker (Query/Header/Cookie/Path/Form/File/Body)` |
+| `_introspect`：第二个 `PROMPT_CONTEXT` 参数（v2.2 起） | `yapi prompt route '<func>' may declare at most one PromptContext parameter` |
 
 完整装饰期错误分支汇总见 [`../architecture/request-lifecycle.md`](../architecture/request-lifecycle.md) §6。
 
@@ -74,10 +76,13 @@ v1 残留 `yapi/errors.py::StateStoreError` 在 v2.1 已**物理删除**。`from
 | 触发位置 | 示例消息 |
 |---|---|
 | handler：用户函数返回非 None/非 str | `yapi prompt route '<func>' must return None or str, got <type>` |
+| `PromptContext._format_value`：`ctx.add(None)` / `add_kv(_, None)` / `add_section(_, None)`（v2.2 起） | `PromptContext does not accept None; use an empty string if you want an empty segment.` |
 | `Runtime.execute`：runner 抛任何异常 | `Agent execution failed: <ExcType>: <exc message>` |
 | `Runtime.execute`：未设 `YAPI_MODEL` 的默认 runner 首次 `.run` | `Agent execution failed: RuntimeError: YAPI_MODEL is not set. Set YAPI_MODEL=test for an offline smoke test, ...` |
 
 注意 `response_model.model_validate` 抛的 `ValidationError` **不**被包装为 `RuntimeExecutionError`——直接上抛由 FastAPI 转 500，先打 `WARNING` log（`response model_validate failed: <repr(exc)>`）。这是有意的"让 pydantic 报错原样向上"行为，方便对接现有 pydantic 错误处理中间件。
+
+`PromptContext` 拒绝 `None` 抛 `RuntimeExecutionError` 这条**不经 `Runtime.execute` 包装层**——`_format_value` 在用户函数体内被同步调用，错误直接沿用户调用栈向上冒到 FastAPI 默认 500，与 v2.1 "动态 prompt 计算发生在 `Runtime.execute` 之前的 handler 层"立场一致。
 
 ## 6. `YapiUsageWarning` 触发清单
 

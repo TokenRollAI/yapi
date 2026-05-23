@@ -10,27 +10,35 @@ status: stable
 
 ## 这是什么项目
 
-yapi 是一个 **prompt-first 的声明式 HTTP 框架**。开发者在 `PromptRouter` 上写 `@router.post("/path")` 装饰一个**有返回注解、有 docstring 的同步函数**；框架在请求期把"函数签名 + 模型 docstring + 函数 docstring + 函数返回的动态 prompt"组装成 system prompt，交给 PydanticAI Agent 生成符合返回注解的结构化响应，最后用 FastAPI 序列化为 JSON。
+yapi 是一个 **prompt-first 的声明式 HTTP 框架**。开发者在 `PromptRouter` 上用 `@router.prompt.post("/path")` 装饰一个**有返回注解、有 docstring 的同步或异步函数**；框架在请求期把"函数签名 + 模型 docstring + 函数 docstring + `PromptContext` 收集的结构化片段 + 函数返回的动态 prompt（裹进 `<context>...</context>` XML 边界）"组装成 system prompt，交给 PydanticAI Agent 生成符合返回注解的结构化响应，最后用 FastAPI 序列化为 JSON。
 
-公开 API 表面共 7 个 re-export（`yapi/__init__.py` `__all__`）：
+公开 API 表面共 8 个 re-export（`yapi/__init__.py` `__all__`）：
 
 - `PromptRouter` — 唯一开发者入口类。
+- `PromptContext` — 自动注入的 prompt 增量收集器（v2.2 新增）。
 - `AgentRunner`、`RunnerContext` — runner 扩展契约（Protocol + frozen dataclass）。
 - `YapiError`、`YapiDeclarationError`、`RuntimeExecutionError`、`YapiUsageWarning` — 完整错误层级。
 
-源码侧目前有 9 个 `.py` 文件 + `yapi/py.typed` 标记，体量较 v2 翻倍（主要来自 `runner.py` 新增 + `router.py` ParamRole 多分类）。下游 mypy / pyright 可识别 yapi 的类型注解。
+源码侧目前有 10 个 `.py` 文件 + `yapi/py.typed` 标记（v2.2 新增 `yapi/prompt_context.py`）。下游 mypy / pyright 可识别 yapi 的类型注解。
 
 ## 对齐的 spec
 
-当前代码精确对齐 `docs/superpowers/specs/2026-05-24-yapi-v2.1-design.md`（v2.1）。v2.1 在 v2 基础上做增量扩展：
+当前代码精确对齐 `docs/superpowers/specs/2026-05-24-yapi-v2.2-design.md`（v2.2）。v2.2 在 v2.1 基础上做增量扩展：
 
-- `PromptRouter` 升级为 `APIRouter` 的真超集：`.get/.post/...` 恢复原生 FastAPI 行为，prompt 路由收敛到 `router.prompt.{get,post,put,patch,delete}` 子命名空间。
-- 函数签名识别原生 FastAPI 写法（`Annotated[BaseModel, Body()]` / `Annotated[T, Depends()]` / `Annotated[str, Query()/Header()/Cookie()/Path()/Form()/File()]`），`async def` 路由函数受支持。
-- 装饰器 kwarg 三档处理（透传白名单 / 拒绝清单装饰期报错 / 未知 `YapiUsageWarning`）取代 v2 的"静默丢弃"。
-- `agent_runner` 抬升为 `AgentRunner` Protocol + `RunnerContext`（含 `path / method`），v2 风格 `lambda **_: {...}` 仍由 `_LegacyCallableRunner` 兼容。
-- v1 残留 `StateStoreError` 已物理删除；state / storage 仍不在仓库内。
+- **`PromptContext` 注入对象**：声明 `ctx: PromptContext` 参数，yapi 在请求期自动注入实例。三方法 `ctx.add(value)` / `ctx.add_kv(k, v)` / `ctx.add_section(name, body)` 收集结构化片段，按 `_format_value` 规则转字符串。
+- **`<context>...</context>` XML 边界**：所有 ctx 片段 + `return str` 动态段统一外裹 XML 标签，作为 system prompt 最后一段；无任何段时整段省略。
+- **`ParamRole.PROMPT_CONTEXT`** 新分类；`_introspect` 返回值由 4-tuple 变 5-tuple（新增 `ctx_param_name`）；handler `__signature__` 过滤 ctx 参数，FastAPI 看不到。
+- **唯一 user-visible 破坏点**（v2.1 → v2.2）：v2.1 路由 `return "hint"` 现在被裹进 `<context>...</context>`（之前裸拼在 system prompt 末尾）。绝大多数 prompt 对 XML 边界鲁棒，无需迁移。
 
-前置阅读 v2 spec（`docs/superpowers/specs/2026-05-21-yapi-v2-design.md`）以理解 v2.1 的增量动机；v1（`docs/superpowers/specs/2026-05-20-yapi-design.md`）与 v0 plan（`docs/superpowers/plans/2026-05-20-yapi-v0-implementation.md`）**已过时**，不要按它们写代码。
+v2.1 已经做到的（仍生效）：
+
+- `PromptRouter` 升级为 `APIRouter` 的真超集，prompt 路由收敛到 `router.prompt.{get,post,put,patch,delete}` 子命名空间。
+- 函数签名识别原生 FastAPI 写法（`Annotated[BaseModel, Body()]` / `Annotated[T, Depends()]` / `Annotated[str, Query()/...]`），`async def` 路由函数受支持。
+- 装饰器 kwarg 三档处理（透传白名单 / 拒绝清单装饰期报错 / 未知 `YapiUsageWarning`）。
+- `agent_runner` 抬升为 `AgentRunner` Protocol + `RunnerContext`（含 `path / method`），v2 风格 callable 由 `_LegacyCallableRunner` 兼容。
+- v1 残留 `StateStoreError` 已物理删除；state / storage **始终**不在仓库内（v2.2 spec §1 重申此立场——state 这件事 yapi 不集成，用 FastAPI 原生 `Depends` 即可）。
+
+前置阅读 v2.1 spec（`docs/superpowers/specs/2026-05-24-yapi-v2.1-design.md`）以理解 v2.2 的增量动机；v2（`docs/superpowers/specs/2026-05-21-yapi-v2-design.md`）、v1（`docs/superpowers/specs/2026-05-20-yapi-design.md`）与 v0 plan（`docs/superpowers/plans/2026-05-20-yapi-v0-implementation.md`）**已过时**，不要按它们写代码。
 
 ## 最重要的对外 API 形态
 

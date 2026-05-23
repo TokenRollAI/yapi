@@ -69,7 +69,7 @@ PromptRouter(
 
 ### 参数四分类（`ParamRole`）
 
-按声明顺序遍历，每个参数被 `_classify_param` 分到三类之一（外加 REQUEST_MODEL 是其中一类）：
+按声明顺序遍历，每个参数被 `_classify_param` 分到下列四类之一：
 
 1. **`REQUEST_MODEL`**：annotation（去 Annotated 外层后）是 `BaseModel` 子类。允许形态：
    - 裸 BaseModel：`req: WishIn`
@@ -77,12 +77,13 @@ PromptRouter(
    - **最多一个**；第二个 REQUEST_MODEL 参数抛 `YapiDeclarationError("may declare at most one Pydantic request model parameter")`。
 2. **`DEPENDENCY`**：`default` 是 `fastapi.params.Depends`，或 Annotated metadata 含 `Depends(...)`。允许 `Annotated[T, Depends(...)]` 形态。
 3. **`INJECTED_FIELD`**：`default` 或 Annotated metadata 是 `fastapi.params.{Query,Header,Cookie,Path,Form,File}` 实例之一（`_INJECTED_FIELD_TYPES`）。
+4. **`PROMPT_CONTEXT`**（v2.2 新增）：annotation 直接是 `PromptContext`（或其子类）。**`_classify_param` 在 `_unwrap_annotated` 之前判定**——若 base type 是 PromptContext 而 Annotated metadata 不空，则抛 `YapiDeclarationError("PromptContext is auto-injected by yapi and must not carry FastAPI markers")`。**最多一个**；第二个 PROMPT_CONTEXT 参数抛 `YapiDeclarationError("may declare at most one PromptContext parameter")`。装饰期 handler `__signature__` 会把该参数**剔除**，FastAPI 看不到。
 
 任何不匹配上述分类的参数（包括 `q: str` 裸标量、`q: int = 0` 默认值标量、`q: str = Body(...)` 标量 Body）都装饰期报错。**`Body(...)` 只允许配合 BaseModel 参数使用**，非 BaseModel 配 `Body` 抛 `YapiDeclarationError("Body() may only annotate a Pydantic BaseModel-typed parameter")`。
 
-### handler `__signature__` 不可剥 Annotated
+### handler `__signature__` 不可剥 Annotated（但要剔除 PROMPT_CONTEXT）
 
-handler 闭包的 `__signature__` 必须**原样**复用用户函数的 `inspect.Parameter`（含 `Annotated[T, marker]` 元数据），否则 FastAPI 无法做请求体 / Query / Header 等解析。详见 [`../reference/annotated-introspection.md`](../reference/annotated-introspection.md)。
+handler 闭包的 `__signature__` 必须**原样**复用用户函数的 `inspect.Parameter`（含 `Annotated[T, marker]` 元数据），否则 FastAPI 无法做请求体 / Query / Header 等解析。**唯一例外**：v2.2 后过滤掉 `ParamRole.PROMPT_CONTEXT` 参数——FastAPI 看不到，自然不会试图当 query / body 解析，OpenAPI schema 也不出现 `PromptContext`。详见 [`../reference/annotated-introspection.md`](../reference/annotated-introspection.md) 与 [`../architecture/request-lifecycle.md`](../architecture/request-lifecycle.md) §1.7。
 
 ## 动态 prompt 契约
 
@@ -94,10 +95,26 @@ handler 闭包的 `__signature__` 必须**原样**复用用户函数的 `inspect
 返回值**只能**是 `None` 或 `str`：
 
 - `None`（包括无 `return`）：合法，无动态段。
-- `str`：作为动态 prompt 段拼到 system prompt 末尾。空串等同无段（`if dynamic_prompt` 为假）。
+- `str`：作为动态 prompt 段拼到 `<context>...</context>` 内的最后一段（v2.2 起统一外裹 XML 边界）。空串等同无段（`if dynamic_prompt` 为假）。
 - 其他任意值（`int / dict / BaseModel / 0 / False / [...]`）→ handler 内抛 `RuntimeExecutionError("... must return None or str, got <type>")`，FastAPI 转 HTTP 500。
 
 用户函数可从 kwargs 拿到完整的 request_model 实例与 Depends / 注入字段解析结果，用于拼接 dynamic prompt。
+
+## PromptContext 注入对象（v2.2 新增）
+
+声明 `ctx: PromptContext` 参数即可在请求期得到 yapi 自动新建的实例，公开方法只有三个：
+
+| 方法 | 形态 | 输出片段 |
+|---|---|---|
+| `ctx.add(value)` | 任意值 | `<_format_value(value)>` |
+| `ctx.add_kv(key, value)` | 键值对 | `{key}: <_format_value(value)>` |
+| `ctx.add_section(name, body)` | 命名段 | `# {name}\n<_format_value(body)>` |
+
+`_format_value` 规则（按顺序匹配）：`str` 原样；`BaseModel` → `model_dump_json()`；`dict / list / tuple` → `json.dumps(..., ensure_ascii=False)`；`None` 抛 `RuntimeExecutionError`；其它 → `str(value)`。
+
+`PromptContext` 是请求局部的纯 append-only 容器，无 `clear / pop / extend`。所有片段（包括用户函数 `return` 的 str）以调用顺序用 `\n\n` 拼接，整体外裹 `<context>...</context>`，作为 system prompt 的**最后一段**。无任何 `add*` 调用且 `return` 不是非空 str 时整段省略。
+
+完整契约见 [`../reference/prompt-context.md`](../reference/prompt-context.md)。
 
 ## 用户原函数不被绑定
 

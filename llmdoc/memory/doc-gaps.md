@@ -29,6 +29,15 @@ status: living
 - v1 残留 `yapi/agent.py::DEFAULT_SYSTEM_PREFIX` 死代码警告：v2.1 已物理删除该常量（`yapi/agent.py` 不再定义 `DEFAULT_SYSTEM_PREFIX`），唯一实际生效的是 `yapi/runtime.py::DEFAULT_SYSTEM_PREFIX`。
 - v2.1 测试矩阵较 v2 显著扩张（8 个 test 文件，覆盖 router / runtime / compat / runner / dx / integration / exports；具体用例数会随后续小修而变，不写死数字）。
 
+## v2.2 落地后新增的事实记录（不是 gap，避免下次再次提出）
+
+- **v2.1 → v2.2 唯一 user-visible 破坏点**：v2.1 路由 `return "hint"` 现在被裹进 `<context>...</context>`（之前裸拼在 system prompt 末尾）。绝大多数 prompt 对 XML 边界鲁棒——substring assertions 仍成立——若 prompt 含字面"看 prompt 末尾的一段话"这种位置依赖措辞，重述为"看 `<context>` 内的内容"即可。版本号 `0.2.0 → 0.3.0`（按 v2.2 spec §9.3：0.x 期允许 MINOR bump 引入小破坏）。
+- **state 集成是有意为之不做**：v2.2 spec §1 / §10 再次明确 yapi 不集成 `StateStore` Protocol、不做 `Annotated[T, FromState(...)]`、不做装饰器 `state=` 参数。state 这件事留给开发者用 FastAPI 原生 `Depends` + 任意客户端解决。下次有人再提"加 state 集成"前先重读这条；示例见 `examples/state_via_depends.py`。
+- **PromptContext 是 yapi 唯一感知 ctx 参数的地方**：FastAPI / OpenAPI 都看不到（handler `__signature__` 过滤），runner 也只看到拼好的 `prompt: str`——`RunnerContext` 字段集合**没变**。需要 segment 级粒度的 runner 自行 parse `<context>`（YAGNI 推迟）。
+- **`prompt_composer=` 旧 2-arg 签名仍可用**：`_adapt_composer` 包一层 adapter，请求期先按 v2.2 的 3-arg 试，TypeError 后回退到 2-arg。与 `_LegacyCallableRunner` 同思路。
+- **v2.2 测试矩阵新增 ~20 用例**：`tests/test_prompt_context.py` 新建（11 条）+ `test_runtime.py` 增补 4 条 compose 用例 + `test_router.py` 增补 6 条 ctx 用例 + `test_integration.py` 增补 3 条 e2e；共 79 passed。
+
 ## 待复核 / 待跟进
 
 - **`Runtime` 内 `model_validate` 失败的错误反馈策略**：当前只打 WARNING log 后让 `ValidationError` 上抛，FastAPI 转 HTTP 500，错误体里看不到字段细节。未来是否包装为 `RuntimeExecutionError` 带字段路径 hint 待定。
+- **多个 `<context>` 块**（如 `<user_context>` / `<item_context>` 分离）：v2.2 spec §10 明确不做，一个路由一个 `<context>`，里面用 `add_section(name, ...)` 区分子段。如果未来 LLM 实测对子段分隔不敏感导致需求出现，再考虑。

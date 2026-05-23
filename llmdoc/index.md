@@ -8,7 +8,7 @@ status: stable
 
 # yapi llmdoc 全局地图
 
-yapi 是一个 prompt-first 的声明式 HTTP 框架：开发者在 `PromptRouter` 上写 `@router.prompt.post(...)` 装饰一个有 docstring 的函数（`def` 或 `async def`），框架在请求期把签名 / docstring / 动态 prompt 转交给 PydanticAI Agent 生成结构化响应。`PromptRouter` 自身是 `fastapi.APIRouter` 的**真超集**——原生 `.get/.post/...` 走 FastAPI 通道，prompt 路由收敛到显式 `router.prompt.*` 子命名空间。当前代码对齐 `docs/superpowers/specs/2026-05-24-yapi-v2.1-design.md`。
+yapi 是一个 prompt-first 的声明式 HTTP 框架：开发者在 `PromptRouter` 上写 `@router.prompt.post(...)` 装饰一个有 docstring 的函数（`def` 或 `async def`），框架在请求期把签名 / docstring / `PromptContext` 收集的结构化片段 / 动态 prompt 转交给 PydanticAI Agent 生成结构化响应。`PromptRouter` 自身是 `fastapi.APIRouter` 的**真超集**——原生 `.get/.post/...` 走 FastAPI 通道，prompt 路由收敛到显式 `router.prompt.*` 子命名空间。当前代码对齐 `docs/superpowers/specs/2026-05-24-yapi-v2.2-design.md`（v2.2 在 v2.1 基础上做增量扩展，引入 `PromptContext` 注入对象 + `<context>` XML 边界）。
 
 新会话的有序读法在 [`startup.md`](./startup.md)，本文件只做分类目录。
 
@@ -30,7 +30,8 @@ yapi 是一个 prompt-first 的声明式 HTTP 框架：开发者在 `PromptRoute
 
 - [`reference/annotated-introspection.md`](./reference/annotated-introspection.md) — `Annotated[T, *metadata]` 内省协议、`_unwrap_annotated` helper、Body 必须先于 Param 判断、handler `__signature__` 不可剥 Annotated。
 - [`reference/error-catalog.md`](./reference/error-catalog.md) — `YapiError / YapiDeclarationError / RuntimeExecutionError / YapiUsageWarning` 层级、各错误的触发位置与示例消息、`StateStoreError` 已物理删除。
-- [`reference/run-and-test.md`](./reference/run-and-test.md) — `uv sync` / `uv run pytest` / `uv run uvicorn` 三组命令、`YAPI_MODEL=test` 离线 smoke、四个 example 跑法、按文件维度的测试矩阵、pytest 抓 DEBUG log 的双指定陷阱。
+- [`reference/prompt-context.md`](./reference/prompt-context.md) — `PromptContext` 注入对象的三方法表面、`_format_value` 序列化规则、`<context>` XML 外裹、空段省略规则。
+- [`reference/run-and-test.md`](./reference/run-and-test.md) — `uv sync` / `uv run pytest` / `uv run uvicorn` 三组命令、`YAPI_MODEL=test` 离线 smoke、五个 example 跑法、按文件维度的测试矩阵、pytest 抓 DEBUG log 的双指定陷阱。
 
 ## guides/ — 工作流
 
@@ -41,6 +42,7 @@ yapi 是一个 prompt-first 的声明式 HTTP 框架：开发者在 `PromptRoute
 - [`memory/doc-gaps.md`](./memory/doc-gaps.md) — 已识别的文档缺口、代码残留、设计欠缺集中索引（含 v2.1 已解决条目的归档）。
 - `memory/decisions/` — 决策日志（recorder 维护）：
   - [`memory/decisions/2026-05-24-yapi-v2.1-surface-split.md`](./memory/decisions/2026-05-24-yapi-v2.1-surface-split.md) — 为什么从装饰器 override 转向 `.prompt` 子命名空间 + APIRouter superset；为什么保留 `_LegacyCallableRunner` 不发 deprecation。
+  - [`memory/decisions/2026-05-24-yapi-v2.2-prompt-context.md`](./memory/decisions/2026-05-24-yapi-v2.2-prompt-context.md) — 为什么把 prompt 增量从 `return str` 升级为 `PromptContext` 注入对象 + `<context>` XML 外裹；为什么不集成 state 存储。
 - `memory/reflections/` — 反思记录（reflector 维护）：
   - [`memory/reflections/2026-05-24-pypi-release-bootstrap.md`](./memory/reflections/2026-05-24-pypi-release-bootstrap.md) — pyyapi 首次 PyPI 发布与 GitHub Trusted Publishing 流水线。
   - [`memory/reflections/2026-05-24-yapi-v2.1-impl.md`](./memory/reflections/2026-05-24-yapi-v2.1-impl.md) — v2.1 实施反思（PromptRouter 升 APIRouter superset / Annotated 全面化 / pydantic-ai 集成类化）。
@@ -51,5 +53,7 @@ llmdoc 文档**不会**复制以下文件的内容，仅在需要时通过相对
 
 - `docs/superpowers/specs/2026-05-20-yapi-design.md` — v1 设计（含 state / tool 的完整愿景）；**已被 v2 + v2.1 取代**，仅作历史参考。
 - `docs/superpowers/specs/2026-05-21-yapi-v2-design.md` — v2 设计（取代 v1 第 4、6、9、10 节）；v2.1 的前置阅读。
-- `docs/superpowers/specs/2026-05-24-yapi-v2.1-design.md` — v2.1 设计（在 v2 基础上增量扩展）；**当前代码的事实来源**。
+- `docs/superpowers/specs/2026-05-24-yapi-v2.1-design.md` — v2.1 设计（在 v2 基础上增量扩展）；v2.2 的前置阅读。
+- `docs/superpowers/specs/2026-05-24-yapi-v2.2-design.md` — v2.2 设计（引入 `PromptContext` + `<context>` XML 边界）；**当前代码的事实来源**。
 - `docs/superpowers/plans/2026-05-20-yapi-v0-implementation.md` — v0 实现 plan，**已过时**（基于 v1）；勿按此文动手。
+- `docs/superpowers/plans/2026-05-24-yapi-v2.2-implementation.md` — v2.2 实施计划，包含完整代码与 commit 拆分。
