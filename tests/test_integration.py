@@ -32,7 +32,7 @@ def test_dependency_injection_flows_into_runtime() -> None:
     def fetch_profile(req: WishRequest) -> dict:
         return {"vip": req.user_id == "u-1"}
 
-    @router.post("/wish")
+    @router.prompt.post("/wish")
     def make_a_wish(
         req: WishRequest,
         profile: dict = Depends(fetch_profile),
@@ -58,7 +58,7 @@ def test_dynamic_prompt_returned_by_handler_reaches_agent_runner() -> None:
 
     router = PromptRouter(agent_runner=fake_agent_runner)
 
-    @router.post("/wish")
+    @router.prompt.post("/wish")
     def make_a_wish(req: WishRequest) -> WishResponse:
         """grant wishes"""
         return f"focus on user {req.user_id}'s mood: {req.wish}"
@@ -76,7 +76,7 @@ def test_handler_returning_non_string_raises_runtime_error() -> None:
     app = FastAPI()
     router = PromptRouter(agent_runner=lambda **_: {"granted": True, "message": "ok"})
 
-    @router.post("/wish")
+    @router.prompt.post("/wish")
     def make_a_wish(req: WishRequest) -> WishResponse:
         """grant wishes"""
         return 42

@@ -20,7 +20,7 @@ app = FastAPI(title="yapi showcase")
 router = PromptRouter()
 
 
-@router.post("/wish")
+@router.prompt.post("/wish")
 def make_a_wish(req: WishIn) -> WishOut:
     """根据用户的愿望决定是否实现。"""
 

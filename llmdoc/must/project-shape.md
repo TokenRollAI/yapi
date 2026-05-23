@@ -12,17 +12,25 @@ status: stable
 
 yapi 是一个 **prompt-first 的声明式 HTTP 框架**。开发者在 `PromptRouter` 上写 `@router.post("/path")` 装饰一个**有返回注解、有 docstring 的同步函数**；框架在请求期把"函数签名 + 模型 docstring + 函数 docstring + 函数返回的动态 prompt"组装成 system prompt，交给 PydanticAI Agent 生成符合返回注解的结构化响应，最后用 FastAPI 序列化为 JSON。
 
-公开 API 表面**只有一个**符号：`PromptRouter`（`yapi/__init__.py`）。源码总规模 ~280 行（7 个 .py 文件），测试 ~300 行。
+公开 API 表面共 7 个 re-export（`yapi/__init__.py` `__all__`）：
+
+- `PromptRouter` — 唯一开发者入口类。
+- `AgentRunner`、`RunnerContext` — runner 扩展契约（Protocol + frozen dataclass）。
+- `YapiError`、`YapiDeclarationError`、`RuntimeExecutionError`、`YapiUsageWarning` — 完整错误层级。
+
+源码侧目前有 9 个 `.py` 文件 + `yapi/py.typed` 标记，体量较 v2 翻倍（主要来自 `runner.py` 新增 + `router.py` ParamRole 多分类）。下游 mypy / pyright 可识别 yapi 的类型注解。
 
 ## 对齐的 spec
 
-当前代码精确对齐 `docs/superpowers/specs/2026-05-21-yapi-v2-design.md`（v2）。v2 在头部明确取代 v1（`docs/superpowers/specs/2026-05-20-yapi-design.md`）的第 4、6、9、10 节：
+当前代码精确对齐 `docs/superpowers/specs/2026-05-24-yapi-v2.1-design.md`（v2.1）。v2.1 在 v2 基础上做增量扩展：
 
-- 装饰器命名从 `llm_post` 收回为复用 FastAPI 的 `.post/.get/...`。
-- 装饰器不再接受 `request_model=` / `response_model=` / `state_*` 等显式参数；契约全部从函数签名推断。
-- state / storage 暂时下线：仓库内**没有** `yapi/state.py`、`yapi/storage.py`，`PromptRouter.__init__` 没有 storage 参数，`Runtime` 没有 load/save 逻辑。
+- `PromptRouter` 升级为 `APIRouter` 的真超集：`.get/.post/...` 恢复原生 FastAPI 行为，prompt 路由收敛到 `router.prompt.{get,post,put,patch,delete}` 子命名空间。
+- 函数签名识别原生 FastAPI 写法（`Annotated[BaseModel, Body()]` / `Annotated[T, Depends()]` / `Annotated[str, Query()/Header()/Cookie()/Path()/Form()/File()]`），`async def` 路由函数受支持。
+- 装饰器 kwarg 三档处理（透传白名单 / 拒绝清单装饰期报错 / 未知 `YapiUsageWarning`）取代 v2 的"静默丢弃"。
+- `agent_runner` 抬升为 `AgentRunner` Protocol + `RunnerContext`（含 `path / method`），v2 风格 `lambda **_: {...}` 仍由 `_LegacyCallableRunner` 兼容。
+- v1 残留 `StateStoreError` 已物理删除；state / storage 仍不在仓库内。
 
-`docs/superpowers/plans/2026-05-20-yapi-v0-implementation.md` 是基于 v1 的实现 plan，**已过时**，不要按它创建 `yapi/state.py` / `yapi/storage.py` / `tests/test_storage.py`。
+前置阅读 v2 spec（`docs/superpowers/specs/2026-05-21-yapi-v2-design.md`）以理解 v2.1 的增量动机；v1（`docs/superpowers/specs/2026-05-20-yapi-design.md`）与 v0 plan（`docs/superpowers/plans/2026-05-20-yapi-v0-implementation.md`）**已过时**，不要按它们写代码。
 
 ## 最重要的对外 API 形态
 
@@ -44,7 +52,7 @@ class WishOut(BaseModel):
 
 router = PromptRouter()
 
-@router.post("/wish")
+@router.prompt.post("/wish")
 def make_a_wish(req: WishIn) -> WishOut:
     """根据用户的愿望决定是否实现。"""
 
@@ -52,7 +60,7 @@ app = FastAPI()
 app.include_router(router)
 ```
 
-实例：`examples/wish_api.py`。
+实例：`examples/wish_api.py`（最小骨架）、`examples/mixed_router.py`（普通路由 + prompt 路由混挂）、`examples/with_depends.py`（`Depends` 注入 + dynamic prompt）、`examples/custom_runner.py`（自定义 `AgentRunner` Protocol）。
 
 ## 运行入口
 
@@ -81,11 +89,17 @@ from yapi import PromptRouter
 
 ## `YAPI_MODEL` 的角色
 
-`PromptRouter()` 不传 `agent_runner` 时回退到默认 `yapi.agent.build_agent_runner()`，在工厂调用时**一次性绑定** `os.getenv("YAPI_MODEL")` 到闭包。
+`PromptRouter()` 不传 `agent_runner` 时回退到默认 `yapi.agent.build_default_runner()`（旧名 `build_agent_runner` 仍是同函数别名），在工厂调用时**一次性绑定** `os.getenv("YAPI_MODEL")` 到 `PydanticAIRunner` 实例。
 
-- 未设置：构造不报错；**第一次请求**时 runner 抛 `NotImplementedError("Connect pydantic_ai.Agent by setting YAPI_MODEL")`，被 `Runtime.execute` 包装为 `RuntimeExecutionError`，最终 FastAPI 转 HTTP 500。
+- 未设置：构造**不报错但发 `YapiUsageWarning`**（spec §6.4 明文要求），**第一次请求**时 runner 抛 `RuntimeError("YAPI_MODEL is not set. Set YAPI_MODEL=test for an offline smoke test, or YAPI_MODEL=openai:gpt-4o etc. for real models.")`，被 `Runtime.execute` 包装为 `RuntimeExecutionError`，最终 FastAPI 转 HTTP 500。
 - 设为模型字符串（如 `openai:gpt-4o`、`anthropic:claude-3-5-sonnet`、`openai:deepseek-chat`）：交给 `pydantic_ai.Agent(...)` 直接解析。**Provider 凭证由 pydantic-ai 在请求期直接读 `os.environ`**，yapi 全程不感知、不校验、不转发：`OPENAI_API_KEY` / `OPENAI_BASE_URL`（OpenAI 与所有 OpenAI 兼容端点，包括 DeepSeek、Azure OpenAI、OneAPI、自托管 vLLM 等）、`ANTHROPIC_API_KEY`、其他 provider 见 PydanticAI 文档。这意味着 yapi 永远不会因为"key 没设"在装饰器期或构造期失败——错误只能在请求期由 pydantic-ai 自己抛出，最终被包装成 `RuntimeExecutionError`。
 - 设为字面量 `test`：PydanticAI 内置 `TestModel` 接管，零 API key、零网络，按响应模型 schema 生成占位结构。**离线冒烟首选**。
 - 注意 yapi **不读 `.env` 文件**——任何 env 注入都由启动器负责（本地推荐 `uvicorn --env-file .env`，CI 用 secrets→env，生产用 systemd/k8s）。这是有意的 12-factor 设计：不依赖 `python-dotenv`，部署形态由部署侧决定。
 
-跨测试场景大多通过 `PromptRouter(agent_runner=lambda **_: {...})` 注入 fake runner 绕开 `YAPI_MODEL`，详见 [`../architecture/agent-runner-contract.md`](../architecture/agent-runner-contract.md)。CI 与 release 流水线均依赖 `YAPI_MODEL=test` 做离线冒烟，因此发版无需配置任何 LLM provider secret。
+### 关于"为什么 import example 就有 warning"
+
+未设 `YAPI_MODEL` 时，`PromptRouter()` 构造期会发 `YapiUsageWarning("YAPI_MODEL not set; the first request to a prompt route will raise. ...")`。这就是 `examples/wish_api.py` / `examples/mixed_router.py` / `examples/with_depends.py` 在 `import` 时出现 warning 的根本原因（`examples/custom_runner.py` 传了自定义 runner 不触发）。这是 spec §6.4 明文要求的"真实启动期最早预警"——**不要静音它**。
+
+测试场景如何避免：单元测试普遍传 `PromptRouter(agent_runner=lambda **_: {...})`，跳过 `build_default_runner`，warning 不会出现；端到端 smoke 设 `YAPI_MODEL=test` 也不会出现。
+
+跨测试场景大多通过 `PromptRouter(agent_runner=lambda **_: {...})` 或自定义 class runner 注入 fake runner 绕开 `YAPI_MODEL`，详见 [`../architecture/agent-runner-contract.md`](../architecture/agent-runner-contract.md)。CI 与 release 流水线均依赖 `YAPI_MODEL=test` 做离线冒烟，因此发版无需配置任何 LLM provider secret。

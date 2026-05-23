@@ -6,9 +6,9 @@ class YapiDeclarationError(YapiError):
     pass
 
 
-class StateStoreError(YapiError):
+class RuntimeExecutionError(YapiError):
     pass
 
 
-class RuntimeExecutionError(YapiError):
+class YapiUsageWarning(UserWarning):
     pass

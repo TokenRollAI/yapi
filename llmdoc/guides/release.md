@@ -61,3 +61,5 @@ yapi 没有 PyPI API token，发布走 OIDC Trusted Publishing。三件套必须
 ## 首次发布的真实历史
 
 `pyyapi` v0.1.0 由 commit `307836a` + tag `v0.1.0` 发布到 PyPI。
+
+`pyyapi` v0.2.0 随 v2.1 落地一起发布；`pyproject.toml` `[project].version` 已 bump 至 `0.2.0`。这是一次破坏性 minor 发版（项目仍在 `0.x` 期，按 SemVer 约定 minor 允许带破坏点）；破坏点见 v2.1 spec §9.2，迁移指引随附 README。CI 与 release 流水线行为不变，仍按上述 tag-driven + Trusted Publishing 三件套发布。

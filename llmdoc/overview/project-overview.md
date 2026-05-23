@@ -20,9 +20,9 @@ yapi 是一个面向**应用后端**的 prompt-first 声明式 HTTP 框架：把
 
 ## 产品气质
 
-- **小而锋利**：源码 ~280 行，公开 API 仅 `PromptRouter` 一个符号；目的不是堆功能，是把"prompt 即接口"这一个点钉死。
-- **复用 FastAPI 的所有外围设施**：路由、`Depends`、OpenAPI、`TestClient`、ASGI 启动，都是 FastAPI 原生行为。yapi 不重造轮子。
-- **声明优先**：所有契约违反在 import 期就抛 `YapiDeclarationError`，运行期不靠"猜"。
+- **小而锋利**：源码集中在 9 个 `.py` 文件内（截至 v2.1），公开 API 仅 7 个 re-export（`PromptRouter` + runner Protocol 二人组 + 4 个错误/警告类）；目的不是堆功能，是把"prompt 即接口"这一个点钉死。
+- **复用 FastAPI 的所有外围设施**：路由、`Depends`、OpenAPI、`TestClient`、ASGI 启动，都是 FastAPI 原生行为。yapi 不重造轮子。从 v2.1 起 `PromptRouter` 直接是 `APIRouter` 的真超集，普通 FastAPI 路由与 prompt 路由可在同一 router 内混挂。
+- **声明优先**：所有契约违反在 import 期就抛 `YapiDeclarationError`，未识别 kwarg 发 `YapiUsageWarning`，运行期不靠"猜"。
 
 ## 目标用户
 
@@ -37,7 +37,7 @@ yapi 是一个面向**应用后端**的 prompt-first 声明式 HTTP 框架：把
 - **不是 prompt 管理平台**：没有 prompt 版本管理、A/B 测试、experiment tracking。prompt 的"版本"就是函数与模型的 docstring，由 git 管理。
 - **不重新封装 LLM SDK**：模型字符串原样交给 PydanticAI；API key、retry、timeout 都委托给 pydantic-ai 处理。
 
-state / storage 暂时退出核心 API（v2 §2、§10），未来是否回归由后续 spec 决定；当前代码中**没有**对应模块。
+state / storage 暂时退出核心 API（v2 §2、§10、v2.1 §10），未来是否回归由后续 spec 决定；当前代码中**没有**对应模块，v1 残留 `StateStoreError` 也在 v2.1 物理删除。
 
 ## v1 → v2 简史
 
@@ -55,13 +55,25 @@ state / storage 暂时退出核心 API（v2 §2、§10），未来是否回归�
 
 **为什么从 v1 收紧到 v2**：v1 把太多决策塞进装饰器参数，与"开发者已经在签名里写过一次 BaseModel"产生重复；同时 state 抽象的成本与第一版要交付的价值不匹配。v2 通过"函数签名是唯一真相来源"把 API 表面降到最小，state 留作后续单独设计。
 
+## v2 → v2.1 简史
+
+- **v2.1 spec**（`docs/superpowers/specs/2026-05-24-yapi-v2.1-design.md`）在 v2 基础上做增量扩展，版本号 `0.1.0` → `0.2.0`：
+  - `PromptRouter` 由"覆盖 `.get/.post/...` 的 APIRouter 子类"升级为**真超集**：原生方法走 FastAPI 通道，prompt 路由收敛到 `router.prompt.{get,post,put,patch,delete}` 子命名空间，混挂被官方鼓励。
+  - 装饰器从 v2 "静默丢弃 FastAPI 原生 kwargs" 改为三档处理：透传白名单（OpenAPI / 路由元数据）/ 拒绝清单（与 yapi 契约冲突的 3 个 kwarg）装饰期报错 / 未知 `YapiUsageWarning`。
+  - 函数签名内省扩展为 ParamRole 多分类，识别 `Annotated[BaseModel, Body()]` / `Annotated[T, Depends()]` / `Annotated[str, Query()/Header()/Cookie()/Path()/Form()/File()]` 等 FastAPI 原生写法；`async def` 路由函数受支持。
+  - `agent_runner` 从朴素 callable 抬升为 `AgentRunner` Protocol + `RunnerContext` frozen dataclass（含 `path / method`），`PydanticAIRunner` 类化、构造期 `YAPI_MODEL` 缺失 warning、isinstance 快路径；v2 风格 `lambda **_: {...}` 仍由 `_LegacyCallableRunner` 透明兼容。
+  - 公开符号从 1 个扩到 7 个 re-export：除 `PromptRouter` 外，新增 `AgentRunner / RunnerContext / YapiError / YapiDeclarationError / RuntimeExecutionError / YapiUsageWarning`；v1 残留 `StateStoreError` 物理删除；`yapi/py.typed` 落库。
+  - `Runtime` 接入 `prompt_composer` 注入点 + module-level `yapi.runtime` / `yapi.router` logger。
+
+**为什么从 v2 收紧到 v2.1**：v2 把所有 HTTP 方法都强行变成 prompt 路由，使得"健康检查 / metrics / 普通 CRUD + LLM 接口"必须新开 router，与"FastAPI 自然扩展"的口号矛盾；同时静默丢弃 FastAPI 原生 kwargs 是已登记的开发者陷阱。v2.1 通过显式 `.prompt.*` 入口 + kwarg 三档处理把这两条暗坑显性化。详细破坏点见 v2.1 spec §9.2。
+
 ## 关键事实速查
 
-- 公开符号：`PromptRouter`（`yapi/__init__.py`）。
+- 公开符号：7 个（`yapi/__init__.py` `__all__`）。
 - Python：≥ 3.12。
 - 关键依赖：`fastapi`、`pydantic`、`pydantic-ai`、`uvicorn`。
 - 唯一外部配置：`YAPI_MODEL`（环境变量）。
-- showcase：`examples/wish_api.py`，28 行。
-- 测试规模：15 条用例，覆盖装饰器、Runtime、OpenAPI、依赖注入、声明/运行错误。
+- showcase：`examples/wish_api.py`（最小骨架）、`examples/mixed_router.py`（混挂）、`examples/with_depends.py`（`Depends`）、`examples/custom_runner.py`（自定义 runner Protocol）。
+- 测试规模：8 个 test 文件覆盖 router / runtime / compat / runner / dx / integration / exports；规模较 v2 显著扩张（不写死数字，避免快速过时）。
 
 详细执行模型见 [`../architecture/request-lifecycle.md`](../architecture/request-lifecycle.md)，agent 契约见 [`../architecture/agent-runner-contract.md`](../architecture/agent-runner-contract.md)。

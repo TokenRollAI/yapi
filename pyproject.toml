@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyyapi"
-version = "0.1.0"
+version = "0.2.0"
 description = "Prompt-first declarative HTTP framework on top of FastAPI and PydanticAI"
 readme = "README.md"
 license = { text = "MIT" }
@@ -49,6 +49,9 @@ Issues = "https://github.com/TokenRollAI/yapi/issues"
 [tool.setuptools.packages.find]
 include = ["yapi*"]
 exclude = ["tests*", "examples*", "docs*", "llmdoc*"]
+
+[tool.setuptools.package-data]
+yapi = ["py.typed"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
