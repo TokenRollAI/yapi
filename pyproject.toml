@@ -3,10 +3,30 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "yapi"
+name = "pyyapi"
 version = "0.1.0"
-description = "Prompt-first declarative HTTP framework"
+description = "Prompt-first declarative HTTP framework on top of FastAPI and PydanticAI"
+readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.12"
+authors = [
+  { name = "DJJ", email = "shuaiqijianhao@qq.com" },
+]
+keywords = ["fastapi", "pydantic", "pydantic-ai", "llm", "prompt", "http", "framework", "declarative"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Framework :: FastAPI",
+  "Framework :: Pydantic",
+  "Topic :: Internet :: WWW/HTTP",
+  "Topic :: Software Development :: Libraries :: Application Frameworks",
+  "Typing :: Typed",
+]
 dependencies = [
   "fastapi>=0.115,<1",
   "pydantic>=2.7,<3",
@@ -20,6 +40,15 @@ dev = [
   "pytest>=8.2,<9",
   "pytest-asyncio>=0.23,<1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/TokenRollAI/yapi"
+Repository = "https://github.com/TokenRollAI/yapi"
+Issues = "https://github.com/TokenRollAI/yapi/issues"
+
+[tool.setuptools.packages.find]
+include = ["yapi*"]
+exclude = ["tests*", "examples*", "docs*", "llmdoc*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
