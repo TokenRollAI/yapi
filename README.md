@@ -255,3 +255,7 @@ uv run uvicorn examples.wish_api:app --reload
 ## License
 
 MIT
+
+---
+
+[LINUX DO — A New Ideal Community](https://linux.do/)
