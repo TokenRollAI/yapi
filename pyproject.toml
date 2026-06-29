@@ -30,7 +30,7 @@ classifiers = [
 dependencies = [
   "fastapi>=0.115,<1",
   "pydantic>=2.7,<3",
-  "pydantic-ai>=0.0.18,<2",
+  "pydantic-ai>=0.0.18,<3",
   "uvicorn>=0.30,<1",
 ]
 
